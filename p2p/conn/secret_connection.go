@@ -240,7 +240,7 @@ func shareEphPubKey(conn io.ReadWriteCloser, locEphPub *[32]byte) (remEphPub *[3
 func deriveSecretAndChallenge(dhSecret *[32]byte, locIsLeast bool) (recvSecret, sendSecret *[aeadKeySize]byte, challenge *[32]byte) {
 	hash := sha256.New
 	hkdf := hkdf.New(hash, dhSecret[:], nil, []byte("TENDERMINT_SECRET_CONNECTION_KEY_AND_CHALLENGE_GEN"))
-	// get twice the amount of data which the aead requires, plus the bytes for the challenge
+	// get enough date for 2 aead keys, and a 32 byte challenge
 	res := new([96]byte)
 	io.ReadFull(hkdf, res[:])
 
