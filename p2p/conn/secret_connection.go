@@ -36,8 +36,9 @@ type SecretConnection struct {
 	recvBuffer []byte
 	recvNonce  *[24]byte
 	sendNonce  *[24]byte
+	recvSecret *[32]byte // shared secret
+	sendSecret *[32]byte // shared secret
 	remPubKey  crypto.PubKey
-	shrSecret  *[32]byte // shared secret
 }
 
 // Performs handshake and returns a new authenticated SecretConnection.
@@ -59,28 +60,25 @@ func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKey) (*
 	}
 
 	// Sort by lexical order.
-	loEphPub, hiEphPub := sort32(locEphPub, remEphPub)
+	loEphPub, _ := sort32(locEphPub, remEphPub)
 
 	// Check if the local ephemeral public key
 	// was the least, lexicographically sorted.
 	locIsLeast := bytes.Equal(locEphPub[:], loEphPub[:])
 
-	// Compute common shared secret.
-	shrSecret := computeSharedSecret(remEphPub, locEphPriv)
+	// Compute common diffie hellman secret.
+	dhSecret := computeDHSecret(remEphPub, locEphPriv)
 
-	// Generate nonces to use for secretbox.
-	recvNonce, sendNonce := genNonces(loEphPub, hiEphPub, locIsLeast)
-
-	// Generate common challenge to sign.
-	challenge := genChallenge(loEphPub, hiEphPub)
+	recvSecret, sendSecret, challenge := deriveSecretAndChallenge(dhSecret, locIsLeast)
 
 	// Construct SecretConnection.
 	sc := &SecretConnection{
 		conn:       conn,
 		recvBuffer: nil,
-		recvNonce:  recvNonce,
-		sendNonce:  sendNonce,
-		shrSecret:  shrSecret,
+		recvNonce:  new([24]byte),
+		sendNonce:  new([24]byte),
+		recvSecret: recvSecret,
+		sendSecret: sendSecret,
 	}
 
 	// Sign the challenge bytes for authentication.
@@ -123,15 +121,14 @@ func (sc *SecretConnection) Write(data []byte) (n int, err error) {
 		binary.BigEndian.PutUint32(frame, uint32(chunkLength))
 		copy(frame[dataLenSize:], chunk)
 
-		aead, err := chacha20poly1305.New(sc.shrSecret[:])
+		aead, err := chacha20poly1305.New(sc.sendSecret[:])
 		if err != nil {
 			return n, errors.New("Invalid SecretConnection Key")
 		}
 		// encrypt the frame
 		var sealedFrame = make([]byte, aead.Overhead()+totalFrameSize)
 		aead.Seal(sealedFrame[:0], sc.sendNonce[:], frame, nil)
-		// fmt.Printf("secretbox.Seal(sealed:%X,sendNonce:%X,shrSecret:%X\n", sealedFrame, sc.sendNonce, sc.shrSecret)
-		incr2Nonce(sc.sendNonce)
+		incrNonce(sc.sendNonce)
 		// end encryption
 
 		_, err = sc.conn.Write(sealedFrame)
@@ -151,7 +148,7 @@ func (sc *SecretConnection) Read(data []byte) (n int, err error) {
 		return
 	}
 
-	aead, err := chacha20poly1305.New(sc.shrSecret[:])
+	aead, err := chacha20poly1305.New(sc.recvSecret[:])
 	if err != nil {
 		return n, errors.New("Invalid SecretConnection Key")
 	}
@@ -163,12 +160,11 @@ func (sc *SecretConnection) Read(data []byte) (n int, err error) {
 
 	// decrypt the frame
 	var frame = make([]byte, totalFrameSize)
-	// fmt.Printf("secretbox.Open(sealed:%X,recvNonce:%X,shrSecret:%X\n", sealedFrame, sc.recvNonce, sc.shrSecret)
 	_, err = aead.Open(frame[:0], sc.recvNonce[:], sealedFrame, nil)
 	if err != nil {
 		return n, errors.New("Failed to decrypt SecretConnection")
 	}
-	incr2Nonce(sc.recvNonce)
+	incrNonce(sc.recvNonce)
 	// end decryption
 
 	var chunkLength = binary.BigEndian.Uint32(frame) // read the first two bytes
@@ -237,13 +233,31 @@ func shareEphPubKey(conn io.ReadWriteCloser, locEphPub *[32]byte) (remEphPub *[3
 	return &_remEphPub, nil
 }
 
-func computeSharedSecret(remPubKey, locPrivKey *[32]byte) (shrSecret *[32]byte) {
-	shrSecret = new([32]byte)
-	shrKey := new([32]byte)
-	curve25519.ScalarMult(shrKey, locPrivKey, remPubKey)
+func deriveSecretAndChallenge(dhSecret *[32]byte, locIsLeast bool) (recvSecret, sendSecret, challenge *[32]byte) {
 	hash := sha256.New
-	hkdf := hkdf.New(hash, shrKey[:], nil, []byte("TENDERMINT_SECRET_CONNECTION_SHARED_SECRET_GEN"))
-	io.ReadFull(hkdf, shrSecret[:])
+	hkdf := hkdf.New(hash, dhSecret[:], nil, []byte("TENDERMINT_SECRET_CONNECTION_KEY_AND_CHALLENGE_GEN"))
+	res := new([96]byte)
+	io.ReadFull(hkdf, res[:])
+
+	challenge = new([32]byte)
+	recvSecret = new([32]byte)
+	sendSecret = new([32]byte)
+	copy(challenge[:], res[64:96])
+
+	if locIsLeast {
+		copy(recvSecret[:], res[0:32])
+		copy(sendSecret[:], res[32:64])
+	} else {
+		copy(sendSecret[:], res[0:32])
+		copy(recvSecret[:], res[32:64])
+	}
+
+	return
+}
+
+func computeDHSecret(remPubKey, locPrivKey *[32]byte) (shrKey *[32]byte) {
+	shrKey = new([32]byte)
+	curve25519.ScalarMult(shrKey, locPrivKey, remPubKey)
 	return
 }
 
@@ -256,25 +270,6 @@ func sort32(foo, bar *[32]byte) (lo, hi *[32]byte) {
 		hi = foo
 	}
 	return
-}
-
-func genNonces(loPubKey, hiPubKey *[32]byte, locIsLo bool) (recvNonce, sendNonce *[24]byte) {
-	nonce1 := hash24(append(loPubKey[:], hiPubKey[:]...))
-	nonce2 := new([24]byte)
-	copy(nonce2[:], nonce1[:])
-	nonce2[len(nonce2)-1] ^= 0x01
-	if locIsLo {
-		recvNonce = nonce1
-		sendNonce = nonce2
-	} else {
-		recvNonce = nonce2
-		sendNonce = nonce1
-	}
-	return
-}
-
-func genChallenge(loPubKey, hiPubKey *[32]byte) (challenge *[32]byte) {
-	return hash32(append(loPubKey[:], hiPubKey[:]...))
 }
 
 func signChallenge(challenge *[32]byte, locPrivKey crypto.PrivKey) (signature crypto.Signature) {
@@ -325,29 +320,6 @@ func shareAuthSignature(sc *SecretConnection, pubKey crypto.PubKey, signature cr
 }
 
 //--------------------------------------------------------------------------------
-
-// sha256
-func hash32(input []byte) (res *[32]byte) {
-	hash := sha256.New
-	hkdf := hkdf.New(hash, input, nil, []byte("TENDERMINT_SECRET_CONNECTION_KEY_GEN"))
-	res = new([32]byte)
-	io.ReadFull(hkdf, res[:])
-	return res
-}
-
-func hash24(input []byte) (res *[24]byte) {
-	hash := sha256.New
-	hkdf := hkdf.New(hash, input, nil, []byte("TENDERMINT_SECRET_CONNECTION_NONCE_GEN"))
-	res = new([24]byte)
-	io.ReadFull(hkdf, res[:])
-	return res
-}
-
-// increment nonce big-endian by 2 with wraparound.
-func incr2Nonce(nonce *[24]byte) {
-	incrNonce(nonce)
-	incrNonce(nonce)
-}
 
 // increment nonce big-endian by 1 with wraparound.
 func incrNonce(nonce *[24]byte) {
