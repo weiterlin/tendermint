@@ -16,6 +16,8 @@ import (
 	"net"
 	"time"
 
+	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/nacl/box"
 
 	"github.com/tendermint/tendermint/crypto"
@@ -43,7 +45,6 @@ type SecretConnection struct {
 // Caller should call conn.Close()
 // See docs/sts-final.pdf for more information.
 func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKey) (*SecretConnection, error) {
-
 	locPubKey := locPrivKey.PubKey()
 
 	// Generate ephemeral keys for perfect forward secrecy.
@@ -57,15 +58,15 @@ func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKey) (*
 		return nil, err
 	}
 
-	// Compute common shared secret.
-	shrSecret := computeSharedSecret(remEphPub, locEphPriv)
-
 	// Sort by lexical order.
 	loEphPub, hiEphPub := sort32(locEphPub, remEphPub)
 
 	// Check if the local ephemeral public key
 	// was the least, lexicographically sorted.
 	locIsLeast := bytes.Equal(locEphPub[:], loEphPub[:])
+
+	// Compute common shared secret.
+	shrSecret := computeSharedSecret(remEphPub, locEphPriv)
 
 	// Generate nonces to use for secretbox.
 	recvNonce, sendNonce := genNonces(loEphPub, hiEphPub, locIsLeast)
@@ -122,7 +123,7 @@ func (sc *SecretConnection) Write(data []byte) (n int, err error) {
 		binary.BigEndian.PutUint32(frame, uint32(chunkLength))
 		copy(frame[dataLenSize:], chunk)
 
-		aead, err := xchacha20poly1305.New(sc.shrSecret[:])
+		aead, err := chacha20poly1305.New(sc.shrSecret[:])
 		if err != nil {
 			return n, errors.New("Invalid SecretConnection Key")
 		}
@@ -150,7 +151,7 @@ func (sc *SecretConnection) Read(data []byte) (n int, err error) {
 		return
 	}
 
-	aead, err := xchacha20poly1305.New(sc.shrSecret[:])
+	aead, err := chacha20poly1305.New(sc.shrSecret[:])
 	if err != nil {
 		return n, errors.New("Invalid SecretConnection Key")
 	}
@@ -238,7 +239,11 @@ func shareEphPubKey(conn io.ReadWriteCloser, locEphPub *[32]byte) (remEphPub *[3
 
 func computeSharedSecret(remPubKey, locPrivKey *[32]byte) (shrSecret *[32]byte) {
 	shrSecret = new([32]byte)
-	box.Precompute(shrSecret, remPubKey, locPrivKey)
+	shrKey := new([32]byte)
+	curve25519.ScalarMult(shrKey, locPrivKey, remPubKey)
+	hash := sha256.New
+	hkdf := hkdf.New(hash, shrKey[:], nil, []byte("TENDERMINT_SECRET_CONNECTION_SHARED_SECRET_GEN"))
+	io.ReadFull(hkdf, shrSecret[:])
 	return
 }
 
