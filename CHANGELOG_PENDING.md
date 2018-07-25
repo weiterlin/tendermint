@@ -5,6 +5,12 @@ BREAKING CHANGES:
     - breaks serialization/signing of all messages with a timestamp
 - [abci] Removed Fee from ResponseDeliverTx and ResponseCheckTx
 - [p2p] Remove salsa and ripemd primitives, in favor of using chacha as a stream cipher, and hkdf
+- [tools] Removed `make ensure_deps` in favor of `make get_vendor_deps`
+
+FEATURES:
+- [tools] Added `make check_dep`
+    - ensures gopkg.lock is synced with gopkg.toml
+    - ensures no branches are used in the gopkg.toml
 
 IMPROVEMENTS:
 - [blockchain] Improve fast-sync logic
