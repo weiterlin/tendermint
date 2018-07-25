@@ -36,10 +36,10 @@ const aeadNonceSize = chacha20poly1305.NonceSize
 type SecretConnection struct {
 	conn       io.ReadWriteCloser
 	recvBuffer []byte
-	recvNonce  *[chacha20poly1305.NonceSize]byte
-	sendNonce  *[chacha20poly1305.NonceSize]byte
-	recvSecret *[chacha20poly1305.KeySize]byte
-	sendSecret *[chacha20poly1305.KeySize]byte
+	recvNonce  *[aeadNonceSize]byte
+	sendNonce  *[aeadNonceSize]byte
+	recvSecret *[aeadKeySize]byte
+	sendSecret *[aeadKeySize]byte
 	remPubKey  crypto.PubKey
 }
 
