@@ -4,6 +4,7 @@ BREAKING CHANGES:
 - [types] CanonicalTime uses nanoseconds instead of clipping to ms
     - breaks serialization/signing of all messages with a timestamp
 - [abci] Removed Fee from ResponseDeliverTx and ResponseCheckTx
+- [abci] Changed time format from int64 to google.protobuf.Timestamp
 
 IMPROVEMENTS:
 - [blockchain] Improve fast-sync logic
