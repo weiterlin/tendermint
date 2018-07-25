@@ -28,7 +28,7 @@ const aeadKeySize = chacha20poly1305.KeySize
 const aeadNonceSize = chacha20poly1305.NonceSize
 
 // SecretConnection implements net.conn.
-// It is (meant to be) an implementation of the STS protocol.
+// It is an implementation of the STS protocol.
 // Note we do not (yet) assume that a remote peer's pubkey
 // is known ahead of time, and thus we are technically
 // still vulnerable to MITM. (TODO!)
@@ -242,7 +242,10 @@ func deriveSecretAndChallenge(dhSecret *[32]byte, locIsLeast bool) (recvSecret, 
 	hkdf := hkdf.New(hash, dhSecret[:], nil, []byte("TENDERMINT_SECRET_CONNECTION_KEY_AND_CHALLENGE_GEN"))
 	// get enough data for 2 aead keys, and a 32 byte challenge
 	res := new([2*aeadKeySize + 32]byte)
-	io.ReadFull(hkdf, res[:])
+	_, err := io.ReadFull(hkdf, res[:])
+	if err != nil {
+		panic(err)
+	}
 
 	challenge = new([32]byte)
 	recvSecret = new([aeadKeySize]byte)
