@@ -240,22 +240,26 @@ func shareEphPubKey(conn io.ReadWriteCloser, locEphPub *[32]byte) (remEphPub *[3
 func deriveSecretAndChallenge(dhSecret *[32]byte, locIsLeast bool) (recvSecret, sendSecret *[aeadKeySize]byte, challenge *[32]byte) {
 	hash := sha256.New
 	hkdf := hkdf.New(hash, dhSecret[:], nil, []byte("TENDERMINT_SECRET_CONNECTION_KEY_AND_CHALLENGE_GEN"))
-	// get enough date for 2 aead keys, and a 32 byte challenge
-	res := new([96]byte)
+	// get enough data for 2 aead keys, and a 32 byte challenge
+	res := new([2*aeadKeySize + 32]byte)
 	io.ReadFull(hkdf, res[:])
 
 	challenge = new([32]byte)
-	recvSecret = new([32]byte)
-	sendSecret = new([32]byte)
+	recvSecret = new([aeadKeySize]byte)
+	sendSecret = new([aeadKeySize]byte)
 	// Use the last 32 bytes as the challenge
-	copy(challenge[:], res[64:96])
+	copy(challenge[:], res[2*aeadKeySize:2*aeadKeySize+32])
 
+	// bytes 0 through aeadKeySize - 1 are one aead key.
+	// bytes aeadKeySize through 2*aeadKeySize -1 are another aead key.
+	// which key corresponds to sending and receiving key depends on whether
+	// the local key is less than the remote key.
 	if locIsLeast {
-		copy(recvSecret[:], res[0:32])
-		copy(sendSecret[:], res[32:64])
+		copy(recvSecret[:], res[0:aeadKeySize])
+		copy(sendSecret[:], res[aeadKeySize:aeadKeySize*2])
 	} else {
-		copy(sendSecret[:], res[0:32])
-		copy(recvSecret[:], res[32:64])
+		copy(sendSecret[:], res[0:aeadKeySize])
+		copy(recvSecret[:], res[aeadKeySize:aeadKeySize*2])
 	}
 
 	return
