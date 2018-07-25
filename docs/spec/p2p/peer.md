@@ -27,9 +27,9 @@ Both handshakes have configurable timeouts (they should complete quickly).
 ### Authenticated Encryption Handshake
 
 Tendermint implements the Station-to-Station protocol
-using Ed25519 keys for Diffie-Helman key-exchange and chacha20poly1305 for encryption.
+using X25519 keys for Diffie-Helman key-exchange and chacha20poly1305 for encryption.
 It goes as follows:
-- generate an emphemeral Ed25519 keypair
+- generate an ephemeral X25519 keypair
 - send the ephemeral public key to the peer
 - wait to receive the peer's ephemeral public key
 - compute the Diffie-Hellman shared secret using the peers ephemeral public key and our ephemeral private key

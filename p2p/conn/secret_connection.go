@@ -69,7 +69,7 @@ func MakeSecretConnection(conn io.ReadWriteCloser, locPrivKey crypto.PrivKey) (*
 	// was the least, lexicographically sorted.
 	locIsLeast := bytes.Equal(locEphPub[:], loEphPub[:])
 
-	// Compute common diffie hellman secret.
+	// Compute common diffie hellman secret using X25519.
 	dhSecret := computeDHSecret(remEphPub, locEphPriv)
 
 	// generate the secret used for receiving, sending, challenge via hkdf-sha2 on dhSecret
